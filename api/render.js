@@ -17,7 +17,11 @@ export default async function handler(req, res) {
   }
 
   try {
-    const doc = new Document();
+const doc = new Document({
+  creator: "GPT Font Tool",
+  title: "Generated Document",
+  description: "A custom .docx file with selected font"
+});
     doc.addSection({
       children: [
         new Paragraph({
