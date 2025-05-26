@@ -1,55 +1,61 @@
-import { promises as fs } from "fs";
+import fs from "fs/promises";
 import path from "path";
+import os from "os";
+import { randomUUID } from "crypto";
+
+const usersDir = path.join(os.tmpdir(), "gpt-users");
+
+async function getUserFile(userId) {
+  const file = path.join(usersDir, `${userId}.json`);
+  try {
+    const data = await fs.readFile(file, "utf-8");
+    return { file, data: JSON.parse(data) };
+  } catch {
+    throw new Error("User not found or not initialized.");
+  }
+}
 
 export const config = {
   api: { bodyParser: true }
 };
 
-const memoryFilePath = path.join(process.cwd(), "memory.json");
-
 export default async function handler(req, res) {
-  const pathname = req.url.split("?")[0];
+  const { userId, text = "", topic = "", type = "", search = "", id = "" } = req.body;
+
+  if (!userId) return res.status(400).json({ error: "Missing userId" });
 
   try {
-    if (pathname.endsWith("/save")) {
-      const { type = "note", topic = "General", content } = req.body;
-      if (!content) return res.status(400).json({ error: "Missing content" });
+    const { file, data } = await getUserFile(userId);
 
-      let memory = [];
-      try {
-        const file = await fs.readFile(memoryFilePath, "utf-8");
-        memory = JSON.parse(file);
-      } catch {}
-
-      const entry = {
-        id: `mem-${Date.now()}`,
-        type,
-        topic,
-        date: new Date().toISOString().split("T")[0],
-        content
-      };
-
-      memory.push(entry);
-      await fs.writeFile(memoryFilePath, JSON.stringify(memory, null, 2));
-      return res.status(200).json({ success: true, entry });
+    if (req.method === "POST" && req.url.endsWith("/save")) {
+      const entry = { id: randomUUID(), type, topic, text, date: new Date().toISOString() };
+      data.memory.unshift(entry);
+      await fs.writeFile(file, JSON.stringify(data, null, 2));
+      return res.status(200).json({ saved: entry });
     }
 
-    if (pathname.endsWith("/search")) {
-      const { query } = req.body;
-      if (!query) return res.status(400).json({ error: "Missing search query" });
-
-      const file = await fs.readFile(memoryFilePath, "utf-8");
-      const memory = JSON.parse(file);
-      const results = memory.filter(item =>
-        JSON.stringify(item).toLowerCase().includes(query.toLowerCase())
+    if (req.method === "POST" && req.url.endsWith("/search")) {
+      const matches = data.memory.filter(entry =>
+        entry.text.toLowerCase().includes(search.toLowerCase()) ||
+        entry.topic.toLowerCase().includes(search.toLowerCase())
       );
-
-      return res.status(200).json({ results });
+      return res.status(200).json({ matches });
     }
 
-    res.status(404).json({ error: "Route not found" });
+    if (req.method === "GET" && req.url.includes("/list")) {
+      return res.status(200).json({ memory: data.memory });
+    }
+
+    if (req.method === "DELETE" && req.url.endsWith("/delete")) {
+      const filtered = data.memory.filter(m => m.id !== id);
+      data.memory = filtered;
+      await fs.writeFile(file, JSON.stringify(data, null, 2));
+      return res.status(200).json({ deleted: id });
+    }
+
+    res.status(404).json({ error: "Invalid memory route" });
   } catch (err) {
-    console.error("Memory handler error:", err);
+    console.error("Memory error:", err.message);
     res.status(500).json({ error: err.message });
   }
 }
