@@ -2,53 +2,74 @@ import fs from "fs/promises";
 import path from "path";
 import os from "os";
 
-const usersDir = path.join(os.tmpdir(), "gpt-users");
+const userStore = path.join(os.tmpdir(), "ultra-users.json");
 
-async function ensureUserFile(userId) {
-  await fs.mkdir(usersDir, { recursive: true });
-  const userFile = path.join(usersDir, `${userId}.json`);
+async function loadUsers() {
   try {
-    await fs.access(userFile);
+    const raw = await fs.readFile(userStore, "utf8");
+    return JSON.parse(raw);
   } catch {
-    await fs.writeFile(userFile, JSON.stringify({ userId, preferences: {}, memory: [] }, null, 2));
+    return {};
   }
-  return userFile;
 }
 
-export const config = {
-  api: { bodyParser: true }
-};
+async function saveUsers(data) {
+  await fs.writeFile(userStore, JSON.stringify(data, null, 2));
+}
 
 export default async function handler(req, res) {
-  const pathname = req.url.split("?")[0];
-  const { userId, preferences = {} } = req.body;
-
-  if (!userId) return res.status(400).json({ error: "Missing userId" });
+  const { method, url, body } = req;
 
   try {
-    const userFile = await ensureUserFile(userId);
+    const users = await loadUsers();
 
-    if (pathname.endsWith("/init")) {
-      const userData = { userId, preferences: {}, memory: [] };
-      await fs.writeFile(userFile, JSON.stringify(userData, null, 2));
-      return res.status(200).json({ message: "User initialized", userId });
+    if (method === "POST" && url.includes("/user/init")) {
+      const { userId, name } = body;
+      users[userId] = users[userId] || { name, preferences: {}, memory: [] };
+      await saveUsers(users);
+      return res.status(200).json({ message: "User initialized", user: users[userId] });
     }
 
-    if (pathname.endsWith("/prefs") && req.method === "POST") {
-      const data = JSON.parse(await fs.readFile(userFile));
-      data.preferences = { ...data.preferences, ...preferences };
-      await fs.writeFile(userFile, JSON.stringify(data, null, 2));
-      return res.status(200).json({ message: "Preferences saved", preferences: data.preferences });
+    if (method === "POST" && url.includes("/user/prefs")) {
+      const { userId, preferences } = body;
+      if (!users[userId]) return res.status(404).json({ error: "User not found" });
+      users[userId].preferences = { ...users[userId].preferences, ...preferences };
+      await saveUsers(users);
+      return res.status(200).json({ message: "Preferences saved" });
     }
 
-    if (pathname.endsWith("/prefs") && req.method === "GET") {
-      const data = JSON.parse(await fs.readFile(userFile));
-      return res.status(200).json({ preferences: data.preferences || {} });
+    if (method === "POST" && url.includes("/memory/save")) {
+      const { userId, entry } = body;
+      if (!users[userId]) return res.status(404).json({ error: "User not found" });
+      users[userId].memory.push({ entry, ts: Date.now() });
+      await saveUsers(users);
+      return res.status(200).json({ message: "Memory saved" });
     }
 
-    res.status(404).json({ error: "Invalid route" });
+    if (method === "POST" && url.includes("/memory/search")) {
+      const { userId, query } = body;
+      const matches = users[userId]?.memory?.filter(m => m.entry.includes(query)) || [];
+      return res.status(200).json({ matches });
+    }
+
+    if (method === "GET" && url.includes("/memory/list")) {
+      const { userId } = req.query;
+      const entries = users[userId]?.memory || [];
+      return res.status(200).json({ entries });
+    }
+
+    if (method === "POST" && url.includes("/memory/delete")) {
+      const { userId, index } = body;
+      if (users[userId]?.memory?.length > index) {
+        users[userId].memory.splice(index, 1);
+        await saveUsers(users);
+        return res.status(200).json({ message: "Entry deleted" });
+      }
+      return res.status(400).json({ error: "Invalid index" });
+    }
+
+    res.status(404).json({ error: "Unknown user endpoint" });
   } catch (err) {
-    console.error("User error:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message || "User handler error" });
   }
 }
