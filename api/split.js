@@ -15,7 +15,7 @@ export default async function handler(req, res) {
   const { docxUrl, method = "pages" } = req.body;
 
   if (!docxUrl || !["pages", "headings"].includes(method)) {
-    return res.status(400).json({ error: "Invalid or missing input" });
+    return res.status(400).json({ error: "Missing or invalid input" });
   }
 
   try {
@@ -34,7 +34,7 @@ export default async function handler(req, res) {
     } else if (method === "headings") {
       let current = [];
       lines.forEach(line => {
-        if (line.match(/^Heading/)) {
+        if (/^Heading/.test(line)) {
           if (current.length) chunks.push(current);
           current = [line];
         } else {
@@ -62,6 +62,7 @@ export default async function handler(req, res) {
 
     res.status(200).json({ parts: urls });
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: err.message });
   }
 }
