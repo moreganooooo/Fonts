@@ -17,7 +17,7 @@ export default async function handler(req, res) {
   const { docxUrl, format } = req.body;
 
   if (!docxUrl || !["html", "pdf", "txt"].includes(format)) {
-    return res.status(400).json({ error: "Invalid or missing input" });
+    return res.status(400).json({ error: "Missing or invalid input" });
   }
 
   try {
@@ -53,21 +53,15 @@ export default async function handler(req, res) {
       });
 
       const result = await cloudRes.json();
-      if (!result.output || !result.output.url) {
-        throw new Error("CloudConvert PDF conversion failed.");
-      }
+      if (!result.output?.url) throw new Error("PDF conversion failed.");
 
-      const pdfFile = await fetch(result.output.url);
-      const pdfBuffer = Buffer.from(await pdfFile.arrayBuffer());
+      const pdfRes = await fetch(result.output.url);
+      const pdfBuffer = Buffer.from(await pdfRes.arrayBuffer());
       await fs.writeFile(filePath, pdfBuffer);
     }
 
     const fileUrl = `https://fonts-nu.vercel.app/api/serve?file=${encodeURIComponent(filename)}`;
-
-    res.status(200).json({
-      fileUrl,
-      inline: inline || null
-    });
+    res.status(200).json({ fileUrl, inline: inline || null });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message || "Conversion failed" });
