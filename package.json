@@ -4,7 +4,8 @@
   "type": "module",
   "dependencies": {
     "docx": "^8.0.0",
-    "node-fetch": "^3.3.2"
-    "mammoth": "^1.4.2"
+    "mammoth": "^1.4.2",
+    "node-fetch": "^3.3.2",
+    "form-data": "^4.0.0"
   }
 }
