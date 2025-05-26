@@ -1,0 +1,48 @@
+import { Document, Packer, Paragraph, TextRun } from "docx";
+import fetch from "node-fetch";
+import fs from "fs/promises";
+
+export const config = {
+  api: {
+    bodyParser: false
+  }
+};
+
+export default async function handler(req, res) {
+  const { text, fontUrl } = req.query;
+
+  if (!text || !fontUrl) {
+    return res.status(400).json({ error: "Missing text or fontUrl" });
+  }
+
+  try {
+    // Download the font file
+    const fontRes = await fetch(fontUrl);
+    const fontBuffer = await fontRes.arrayBuffer();
+
+    // Normally you'd register the font here (docx doesn't support custom fonts natively),
+    // but for now this will just use default font styles.
+
+    const doc = new Document();
+    doc.addSection({
+      children: [
+        new Paragraph({
+          children: [
+            new TextRun({
+              text,
+              font: "Arial", // Placeholder - true font integration requires extra steps
+              size: 24
+            })
+          ]
+        })
+      ]
+    });
+
+    const b64string = await Packer.toBase64String(doc);
+    const fileUrl = `data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,${b64string}`;
+
+    res.status(200).json({ docxUrl: fileUrl });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
