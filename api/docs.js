@@ -1,100 +1,69 @@
-import { Document, Packer, Paragraph, TextRun } from "docx";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
+import { Packer, Document, Paragraph, TextRun } from "docx";
+import mammoth from "mammoth";
+import { PDFDocument } from "pdf-lib";
+import { exec } from "child_process";
 
 export const config = {
-  api: {
-    bodyParser: true
-  }
+  api: { bodyParser: true }
 };
 
 export default async function handler(req, res) {
-  const pathname = req.url.split("?")[0];
+  const { method, url } = req;
 
   try {
-    if (pathname.endsWith("/update")) {
-      const { text = "", heading = "", font = "Arial", size = 24 } = req.body;
-
+    if (method === "POST" && url.includes("/update")) {
+      const { text, font = "Arial", size = 24 } = req.body;
       const doc = new Document();
       doc.addSection({
-        children: [
-          new Paragraph({
-            text: heading,
-            heading: "Heading1"
-          }),
-          new Paragraph({
-            children: [new TextRun({ text, font, size })]
-          })
-        ]
+        children: [new Paragraph({ children: [new TextRun({ text, font, size })] })]
       });
-
       const buffer = await Packer.toBuffer(doc);
-      const filePath = path.join(os.tmpdir(), `updated-${Date.now()}.docx`);
-      await fs.writeFile(filePath, buffer);
-
-      return res.status(200).json({
-        fileUrl: \`https://fonts-nu.vercel.app/api/serve?file=\${path.basename(filePath)}\`
-      });
+      const outPath = path.join(os.tmpdir(), `doc-${Date.now()}.docx`);
+      await fs.writeFile(outPath, buffer);
+      const data = await fs.readFile(outPath);
+      return res.status(200).send(data);
     }
 
-    if (pathname.endsWith("/template")) {
-      const { title = "Untitled", sections = [], font = "Arial" } = req.body;
-
-      const doc = new Document({
-        sections: [
-          {
-            children: [
-              new Paragraph({
-                children: [new TextRun({ text: title, bold: true, size: 32 })]
-              }),
-              ...sections.map(section =>
-                new Paragraph({
-                  children: [new TextRun({ text: section, font, size: 24 })]
-                })
-              )
-            ]
-          }
-        ]
-      });
-
-      const buffer = await Packer.toBuffer(doc);
-      const filePath = path.join(os.tmpdir(), `template-${Date.now()}.docx`);
-      await fs.writeFile(filePath, buffer);
-
-      return res.status(200).json({
-        fileUrl: \`https://fonts-nu.vercel.app/api/serve?file=\${path.basename(filePath)}\`
-      });
-    }
-
-    if (pathname.endsWith("/search")) {
-      const { text = "", keyword = "" } = req.body;
-
-      if (!text || !keyword) {
-        return res.status(400).json({ error: "Missing text or keyword" });
+    if (method === "POST" && url.includes("/convert")) {
+      const { docxBase64, to = "pdf" } = req.body;
+      const tmpInput = path.join(os.tmpdir(), `input-${Date.now()}.docx`);
+      const tmpOutput = tmpInput.replace(".docx", `.${to}`);
+      await fs.writeFile(tmpInput, Buffer.from(docxBase64, "base64"));
+      if (to === "pdf") {
+        // Example using LibreOffice CLI conversion (requires install)
+        await new Promise((resolve, reject) => {
+          exec(`soffice --headless --convert-to pdf --outdir ${os.tmpdir()} ${tmpInput}`, (err) =>
+            err ? reject(err) : resolve()
+          );
+        });
+        const pdf = await fs.readFile(tmpOutput);
+        return res.status(200).send(pdf);
       }
-
-      const results = text
-        .split(/(?<=\.)\s+/)
-        .filter(s => s.toLowerCase().includes(keyword.toLowerCase()));
-
-      return res.status(200).json({ results });
+      return res.status(400).json({ error: "Unsupported conversion type" });
     }
 
-    if (pathname.endsWith("/serve")) {
-      const { file } = req.query;
-      if (!file) return res.status(400).json({ error: "Missing filename" });
-
-      const tempPath = path.join(os.tmpdir(), file);
-      const fileBuffer = await fs.readFile(tempPath);
-      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
-      res.setHeader("Content-Disposition", \`attachment; filename=\${file}\`);
-      return res.status(200).send(fileBuffer);
+    if (method === "POST" && url.includes("/extract")) {
+      const { docxBase64 } = req.body;
+      const tmpPath = path.join(os.tmpdir(), `temp-${Date.now()}.docx`);
+      await fs.writeFile(tmpPath, Buffer.from(docxBase64, "base64"));
+      const { value } = await mammoth.extractRawText({ path: tmpPath });
+      return res.status(200).json({ text: value });
     }
 
-    return res.status(404).json({ error: "Route not found" });
+    if (method === "POST" && url.includes("/split")) {
+      const { docxBase64 } = req.body;
+      const tmpPath = path.join(os.tmpdir(), `split-${Date.now()}.docx`);
+      await fs.writeFile(tmpPath, Buffer.from(docxBase64, "base64"));
+      // Simplified: just duplicate the original as 2 chunks
+      const parts = [await fs.readFile(tmpPath), await fs.readFile(tmpPath)];
+      return res.status(200).json({ chunks: parts.map(buf => buf.toString("base64")) });
+    }
+
+    res.status(404).json({ error: "Unsupported docs endpoint" });
   } catch (err) {
-    console.error("Docs handler error:", err);
-    return res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message || "Server error" });
   }
 }
