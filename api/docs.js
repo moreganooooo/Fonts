@@ -1,113 +1,100 @@
-import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, AlignmentType } from "docx";
-import { promises as fs } from "fs";
+import { Document, Packer, Paragraph, TextRun } from "docx";
+import fs from "fs/promises";
 import path from "path";
 import os from "os";
 
 export const config = {
-  api: { bodyParser: true }
+  api: {
+    bodyParser: true
+  }
 };
-
-function createContentBlock(block) {
-  if (block.type === "text") {
-    const run = new TextRun({
-      text: block.text,
-      bold: block.style?.bold,
-      italics: block.style?.italic,
-      underline: block.style?.underline,
-      size: block.style?.fontSize ? block.style.fontSize * 2 : undefined
-    });
-
-    return new Paragraph({
-      alignment: block.style?.alignment || AlignmentType.LEFT,
-      children: [run]
-    });
-  }
-
-  if (block.type === "image") {
-    return new Paragraph({ text: "[Image Placeholder]" });
-  }
-
-  if (block.type === "table") {
-    const rows = block.rows.map(row =>
-      new TableRow({
-        children: row.map(cell =>
-          new TableCell({
-            width: { size: 100 / row.length, type: WidthType.PERCENTAGE },
-            children: [new Paragraph(cell)]
-          })
-        )
-      })
-    );
-
-    return new Table({ rows, width: { size: 100, type: WidthType.PERCENTAGE } });
-  }
-
-  return null;
-}
-
-function fillTemplate(template, values) {
-  return template.replace(/{{(\w+)}}/g, (_, key) => values[key] || "");
-}
 
 export default async function handler(req, res) {
   const pathname = req.url.split("?")[0];
 
-  if (pathname.endsWith("/update")) {
-    const { docxUrl, fileName, contentBlocks } = req.body;
+  try {
+    if (pathname.endsWith("/update")) {
+      const { text = "", heading = "", font = "Arial", size = 24 } = req.body;
 
-    if (!contentBlocks) {
-      return res.status(400).json({ error: "Missing contentBlocks" });
+      const doc = new Document();
+      doc.addSection({
+        children: [
+          new Paragraph({
+            text: heading,
+            heading: "Heading1"
+          }),
+          new Paragraph({
+            children: [new TextRun({ text, font, size })]
+          })
+        ]
+      });
+
+      const buffer = await Packer.toBuffer(doc);
+      const filePath = path.join(os.tmpdir(), `updated-${Date.now()}.docx`);
+      await fs.writeFile(filePath, buffer);
+
+      return res.status(200).json({
+        fileUrl: \`https://fonts-nu.vercel.app/api/serve?file=\${path.basename(filePath)}\`
+      });
     }
 
-    try {
-      const children = [];
+    if (pathname.endsWith("/template")) {
+      const { title = "Untitled", sections = [], font = "Arial" } = req.body;
 
-      for (const block of contentBlocks) {
-        const content = createContentBlock(block);
-        if (content) children.push(content);
+      const doc = new Document({
+        sections: [
+          {
+            children: [
+              new Paragraph({
+                children: [new TextRun({ text: title, bold: true, size: 32 })]
+              }),
+              ...sections.map(section =>
+                new Paragraph({
+                  children: [new TextRun({ text: section, font, size: 24 })]
+                })
+              )
+            ]
+          }
+        ]
+      });
+
+      const buffer = await Packer.toBuffer(doc);
+      const filePath = path.join(os.tmpdir(), `template-${Date.now()}.docx`);
+      await fs.writeFile(filePath, buffer);
+
+      return res.status(200).json({
+        fileUrl: \`https://fonts-nu.vercel.app/api/serve?file=\${path.basename(filePath)}\`
+      });
+    }
+
+    if (pathname.endsWith("/search")) {
+      const { text = "", keyword = "" } = req.body;
+
+      if (!text || !keyword) {
+        return res.status(400).json({ error: "Missing text or keyword" });
       }
 
-      const doc = new Document({
-        sections: [{ children }]
-      });
+      const results = text
+        .split(/(?<=\.)\s+/)
+        .filter(s => s.toLowerCase().includes(keyword.toLowerCase()));
 
-      const buffer = await Packer.toBuffer(doc);
-      const finalName = fileName || `Updated-${Date.now()}.docx`;
-      const filePath = path.join(os.tmpdir(), finalName);
-      await fs.writeFile(filePath, buffer);
-
-      const fileUrl = `https://fonts-nu.vercel.app/api/serve?file=${encodeURIComponent(finalName)}`;
-      res.status(200).json({ fileUrl });
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  }
-
-  else if (pathname.endsWith("/template")) {
-    const { template, values, fileName = "template-filled.docx" } = req.body;
-
-    if (!template || typeof values !== "object") {
-      return res.status(400).json({ error: "Missing or invalid input" });
+      return res.status(200).json({ results });
     }
 
-    try {
-      const filledText = fillTemplate(template, values);
-      const doc = new Document({
-        sections: [{ children: [new Paragraph(filledText)] }]
-      });
+    if (pathname.endsWith("/serve")) {
+      const { file } = req.query;
+      if (!file) return res.status(400).json({ error: "Missing filename" });
 
-      const buffer = await Packer.toBuffer(doc);
-      const filePath = path.join(os.tmpdir(), fileName);
-      await fs.writeFile(filePath, buffer);
-
-      const fileUrl = `https://fonts-nu.vercel.app/api/serve?file=${encodeURIComponent(fileName)}`;
-      res.status(200).json({ fileUrl });
-    } catch (err) {
-      res.status(500).json({ error: err.message });
+      const tempPath = path.join(os.tmpdir(), file);
+      const fileBuffer = await fs.readFile(tempPath);
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+      res.setHeader("Content-Disposition", \`attachment; filename=\${file}\`);
+      return res.status(200).send(fileBuffer);
     }
-  }
 
-  else {
-    res.status(404).json({ error: "Unknown route" });
+    return res.status(404).json({ error: "Route not found" });
+  } catch (err) {
+    console.error("Docs handler error:", err);
+    return res.status(500).json({ error: err.message });
   }
 }
