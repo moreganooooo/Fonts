@@ -1,6 +1,7 @@
 import { Document, Packer, Paragraph, TextRun } from "docx";
-import fetch from "node-fetch";
 import fs from "fs/promises";
+import path from "path";
+import os from "os";
 
 export const config = {
   api: {
@@ -16,33 +17,32 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Download the font file
-    const fontRes = await fetch(fontUrl);
-    const fontBuffer = await fontRes.arrayBuffer();
-
-    // Normally you'd register the font here (docx doesn't support custom fonts natively),
-    // but for now this will just use default font styles.
-
+    // Create a simple doc (custom font not truly embedded without template setup)
     const doc = new Document();
     doc.addSection({
       children: [
         new Paragraph({
-          children: [
-            new TextRun({
-              text,
-              font: "Arial", // Placeholder - true font integration requires extra steps
-              size: 24
-            })
-          ]
+          children: [new TextRun({ text, font: "Arial", size: 24 })]
         })
       ]
     });
 
-    const b64string = await Packer.toBase64String(doc);
-    const fileUrl = `data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,${b64string}`;
+    // Generate the .docx file
+    const buffer = await Packer.toBuffer(doc);
 
-    res.status(200).json({ docxUrl: fileUrl });
+    // Save to temp file
+    const tempPath = path.join(os.tmpdir(), `output-${Date.now()}.docx`);
+    await fs.writeFile(tempPath, buffer);
+
+    // Set headers to download
+    res.setHeader("Content-Disposition", "attachment; filename=generated.docx");
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+
+    // Pipe the file back
+    const fileBuffer = await fs.readFile(tempPath);
+    res.status(200).send(fileBuffer);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Failed to render document" });
   }
 }
