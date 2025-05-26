@@ -42,7 +42,5 @@ export default async function handler(req, res) {
     const fileBuffer = await fs.readFile(tempPath);
     res.status(200).send(fileBuffer);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to render document" });
-  }
+  res.status(500).json({ error: err.message || "Unknown error" });
 }
