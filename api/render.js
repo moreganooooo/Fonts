@@ -20,21 +20,23 @@ export default async function handler(req, res) {
 const doc = new Document({
   creator: "GPT Font Tool",
   title: "Generated Document",
-  description: "A custom .docx file with selected font"
-});
-    doc.addSection({
+  description: "A custom .docx file with selected font",
+  sections: [
+    {
       children: [
         new Paragraph({
           children: [
             new TextRun({
               text,
-              font: "Arial",    // We can update to apply actual font style later
+              font: "Arial",
               size: 24
             })
           ]
         })
       ]
-    });
+    }
+  ]
+});
 
     const buffer = await Packer.toBuffer(doc);
     const tempPath = path.join(os.tmpdir(), `output-${Date.now()}.docx`);
