@@ -41,17 +41,33 @@ Respond in JSON format.\n\nWebsite Content:\n\${text.slice(0, 6000)}\`;
   return data.choices?.[0]?.message?.content || "No analysis returned";
 }
 
+function extractEmails(text) {
+  const regex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}/g;
+  return [...new Set(text.match(regex) || [])];
+}
+
 export default async function handler(req, res) {
   const pathname = req.url.split("?")[0];
   const { url, driveLink, path = "/", keyword = "" } = req.body;
 
   try {
-    if (pathname.endsWith("/fetch")) {
+    if (pathname.endsWith("/fetch") || pathname.endsWith("/emails") || pathname.endsWith("/analyze")) {
       if (!url || !url.startsWith("http")) return res.status(400).json({ error: "Invalid URL" });
       const html = await fetch(url).then(r => r.text());
       const dom = new JSDOM(html);
-      const text = dom.window.document.body.textContent.replace(/\s+/g, " ").trim().slice(0, 5000);
-      return res.status(200).json({ text });
+      const text = dom.window.document.body.textContent.replace(/\s+/g, " ").trim();
+
+      if (pathname.endsWith("/emails")) {
+        const emails = extractEmails(text);
+        return res.status(200).json({ emails });
+      }
+
+      if (pathname.endsWith("/analyze")) {
+        const analysis = await analyzeWithGPT(text);
+        return res.status(200).json({ analysis });
+      }
+
+      return res.status(200).json({ text: text.slice(0, 5000) });
     }
 
     if (pathname.endsWith("/drive")) {
@@ -70,15 +86,6 @@ export default async function handler(req, res) {
         ? fullText.split(/(?<=\.)\s+/).filter(s => s.toLowerCase().includes(keyword.toLowerCase()))
         : [fullText.slice(0, 3000)];
       return res.status(200).json({ matches });
-    }
-
-    if (pathname.endsWith("/analyze")) {
-      if (!url || !url.startsWith("http")) return res.status(400).json({ error: "Invalid URL" });
-      const html = await fetch(url).then(r => r.text());
-      const dom = new JSDOM(html);
-      const text = dom.window.document.body.textContent.replace(/\s+/g, " ").trim();
-      const analysis = await analyzeWithGPT(text);
-      return res.status(200).json({ analysis });
     }
 
     res.status(404).json({ error: "Route not found" });
