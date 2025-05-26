@@ -15,30 +15,27 @@ export default async function handler(req, res) {
   const { docxUrls } = req.body;
 
   if (!docxUrls || !Array.isArray(docxUrls) || docxUrls.length < 2) {
-    return res.status(400).json({ error: "At least two .docx URLs required" });
+    return res.status(400).json({ error: "At least two valid .docx URLs are required" });
   }
 
   try {
-    const children = [];
+    const paragraphs = [];
 
     for (const url of docxUrls) {
       const response = await fetch(url);
       const buffer = Buffer.from(await response.arrayBuffer());
       const { value: text } = await mammoth.extractRawText({ buffer });
 
-      const paragraphs = text.split("\n").filter(line => line.trim() !== "");
-      paragraphs.forEach(p => {
-        children.push(new Paragraph(p));
-      });
+      const lines = text.split("\n").filter(Boolean);
+      for (const line of lines) {
+        paragraphs.push(new Paragraph(line));
+      }
 
-      // Add a spacer between documents
-      children.push(new Paragraph("—"));
+      // Add a separator between documents
+      paragraphs.push(new Paragraph("–––––––––––––––––––––––––––"));
     }
 
-    const doc = new Document({
-      sections: [{ children }]
-    });
-
+    const doc = new Document({ sections: [{ children: paragraphs }] });
     const mergedBuffer = await Packer.toBuffer(doc);
     const fileName = `merged-${Date.now()}.docx`;
     const filePath = path.join(os.tmpdir(), fileName);
